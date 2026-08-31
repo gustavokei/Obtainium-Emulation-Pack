@@ -12,6 +12,7 @@ import ssl
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import cmp_to_key
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -150,6 +151,45 @@ def _filter_links_by_extension(links: list[str]) -> list[str]:
     return [link for link in links if link.lower().endswith(APK_EXTENSIONS)]
 
 
+def _split_alphanumeric(s: str) -> list[str]:
+    if not s:
+        return []
+    parts: list[str] = []
+    buf = [s[0]]
+    is_numeric = s[0].isdigit()
+    for ch in s[1:]:
+        current_is_numeric = ch.isdigit()
+        if current_is_numeric == is_numeric:
+            buf.append(ch)
+        else:
+            parts.append("".join(buf))
+            buf = [ch]
+            is_numeric = current_is_numeric
+    parts.append("".join(buf))
+    return parts
+
+
+def _compare_alphanumeric(a: str, b: str) -> int:
+    """Match Obtainium compareAlphaNumeric (numeric runs compared as ints)."""
+    a_parts = _split_alphanumeric(a)
+    b_parts = _split_alphanumeric(b)
+    for a_part, b_part in zip(a_parts, b_parts):
+        a_is_number = a_part.isdigit()
+        b_is_number = b_part.isdigit()
+        if a_is_number and b_is_number:
+            cmp = (int(a_part) > int(b_part)) - (int(a_part) < int(b_part))
+            if cmp:
+                return cmp
+        elif not a_is_number and not b_is_number:
+            if a_part < b_part:
+                return -1
+            if a_part > b_part:
+                return 1
+        else:
+            return 1 if a_is_number else -1
+    return (len(a_parts) > len(b_parts)) - (len(a_parts) < len(b_parts))
+
+
 def _sort_links(
     links: list[str],
     skip_sort: bool = False,
@@ -158,8 +198,14 @@ def _sort_links(
 ) -> list[str]:
     if skip_sort:
         return links
-    key = (lambda u: u.rsplit("/", 1)[-1]) if sort_by_last_segment else None
-    result = sorted(links, key=key)
+
+    def sort_key(url: str) -> str:
+        if sort_by_last_segment:
+            segments = [s for s in url.split("/") if s]
+            return segments[-1] if segments else url
+        return url
+
+    result = sorted(links, key=cmp_to_key(lambda a, b: _compare_alphanumeric(sort_key(a), sort_key(b))))
     if reverse_sort:
         result.reverse()
     return result
